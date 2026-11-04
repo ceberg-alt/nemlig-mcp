@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: nemlig-mcp-private
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEMLIG_ALLOW_HEADER_CREDENTIALS
+        value: "false"
+      - key: MCP_API_KEY
+        sync: false
+      - key: NEMLIG_USERNAME
+        sync: false
+      - key: NEMLIG_PASSWORD
+        sync: false

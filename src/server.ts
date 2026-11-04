@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import Fastify, { type FastifyInstance, type RouteHandlerMethod } from 'fastify';
 import { config } from './config.js';
@@ -9,13 +10,34 @@ import type { SessionManager } from './sessions.js';
 const INTERNAL_ERROR = -32_603;
 
 export function createHttpServer(sessions: SessionManager): FastifyInstance {
+  // Remote deployments must never expose basket tools without authentication.
+  // Use an independently generated, high-entropy secret; never use Nemlig's password.
+  const apiKey = process.env['MCP_API_KEY']?.trim();
+  if (process.env['NODE_ENV'] === 'production' && (!apiKey || apiKey.length < 32)) {
+    throw new Error('MCP_API_KEY must be set to a strong secret (at least 32 characters) in production');
+  }
   const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
+
+  if (apiKey) {
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.url.split('?')[0] !== '/mcp') return;
+      const authorization = request.headers.authorization;
+      const supplied = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+      // Constant-time comparison of fixed-size digests; avoids leaking the key.
+      const expectedDigest = createHash('sha256').update(apiKey).digest();
+      const suppliedDigest = createHash('sha256').update(supplied ?? '').digest();
+      if (!supplied || !timingSafeEqual(expectedDigest, suppliedDigest)) {
+        reply.header('WWW-Authenticate', 'Bearer realm="nemlig-mcp"');
+        return reply.code(401).send({ error: 'Unauthorized' });
+      }
+    });
+  }
+
 
   app.get('/health', async () => ({
     status: 'ok',
     server: SERVER_NAME,
     version: SERVER_VERSION,
-    credentials: config.defaultCredentials ? 'configured' : 'header-only',
   }));
 
   /**
